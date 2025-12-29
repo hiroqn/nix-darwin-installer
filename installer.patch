@@ -1,0 +1,87 @@
+diff --git i/packaging/binary-tarball.nix w/packaging/binary-tarball.nix
+index 2050384b0..d91b6bb8e 100644
+--- i/packaging/binary-tarball.nix
++++ w/packaging/binary-tarball.nix
+@@ -4,6 +4,8 @@
+   buildPackages,
+   cacert,
+   nix,
++  darwinSystem,
++  self,
+ }:
+ 
+ let
+@@ -12,6 +14,8 @@ let
+     rootPaths = [
+       nix
+       cacert
++      darwinSystem.system
++      self
+     ];
+   };
+ 
+@@ -32,6 +36,8 @@ runCommand "nix-binary-tarball-${version}" env ''
+     --subst-var-by cacert ${cacert}
+ 
+   substitute ${../scripts/install-darwin-multi-user.sh} $TMPDIR/install-darwin-multi-user.sh \
++    --subst-var-by darwin_system ${darwinSystem.system} \
++    --subst-var-by self ${self} \
+     --subst-var-by nix ${nix} \
+     --subst-var-by cacert ${cacert}
+   substitute ${../scripts/install-systemd-multi-user.sh} $TMPDIR/install-systemd-multi-user.sh \
+diff --git i/scripts/install-darwin-multi-user.sh w/scripts/install-darwin-multi-user.sh
+index c74999512..5e2c5fc42 100644
+--- i/scripts/install-darwin-multi-user.sh
++++ w/scripts/install-darwin-multi-user.sh
+@@ -21,6 +21,9 @@ readonly NIX_DAEMON_DEST=/Library/LaunchDaemons/org.nixos.nix-daemon.plist
+ # create by default; set 0 to DIY, use a symlink, etc.
+ readonly NIX_VOLUME_CREATE=${NIX_VOLUME_CREATE:-1} # now default
+ 
++readonly DARWIN_SYSTEM="@darwin_system@"
++readonly SELF="@self@"
++
+ # caution: may update times on / if not run as normal non-root user
+ read_only_root() {
+     # this touch command ~should~ always produce an error
+@@ -121,6 +124,17 @@ poly_configure_nix_daemon_service() {
+           launchctl kickstart -k system/org.nixos.nix-daemon
+ }
+ 
++poly_configure_nix_daemon_service() {
++    _sudo "activate" \
++        "$DARWIN_SYSTEM"/activate
++
++    _sudo "copy directory" \
++        /bin/cp -R "$SELF"/nix-darwin/ /etc/nix-darwin
++
++    _sudo "darwin-rebuild switch" \
++        env "PATH=$DARWIN_SYSTEM/sw/bin:$PATH" "$DARWIN_SYSTEM"/sw/bin/darwin-rebuild switch --flake /etc/nix-darwin#default --override-input nix-darwin-installer "$SELF"
++}
++
+ poly_group_exists() {
+     /usr/bin/dscl . -read "/Groups/$1" > /dev/null 2>&1
+ }
+diff --git i/scripts/install-multi-user.sh w/scripts/install-multi-user.sh
+index f051ccc46..a55d2fc43 100644
+--- i/scripts/install-multi-user.sh
++++ w/scripts/install-multi-user.sh
+@@ -1016,19 +1016,8 @@ main() {
+     create_build_group
+     create_build_users
+     create_directories
+-    place_channel_configuration
+     install_from_extracted_nix
+ 
+-    configure_shell_profile
+-
+-    set +eu
+-    # shellcheck disable=SC1091
+-    . /etc/profile
+-    set -eu
+-
+-    setup_default_profile
+-    place_nix_configuration
+-
+     poly_configure_nix_daemon_service
+ 
+     trap finish_success EXIT
